@@ -1,5 +1,5 @@
 package com.inkcloud.payment_service.enums;
 
 public enum PaymentMethod {
-    EASY_PAY, CARD
+    EASYPAY, CARD, SAMSUNGPAY,KAKAOPAY, NAVERPAY,PAYCO,SSGPAY,LPAY,TOSSPAY,TMONEY
 }

@@ -1,17 +1,21 @@
 package com.inkcloud.payment_service.service;
 
+import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.Base64;
+import java.util.HashMap;
 import java.util.Map;
 
 import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
 
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
+import org.springframework.web.reactive.function.BodyInserters;
 import org.springframework.web.reactive.function.client.WebClient;
 
 import com.fasterxml.jackson.databind.JsonNode;
@@ -23,6 +27,9 @@ import com.inkcloud.payment_service.enums.PaymentMethod;
 import com.inkcloud.payment_service.enums.PaymentStatus;
 import com.inkcloud.payment_service.repository.PaymentRepository;
 
+import io.portone.sdk.server.webhook.Webhook;
+import io.portone.sdk.server.webhook.WebhookVerifier;
+import jakarta.transaction.Transactional;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import reactor.core.publisher.Mono;
@@ -30,36 +37,59 @@ import reactor.core.publisher.Mono;
 @RequiredArgsConstructor
 @Slf4j
 @Service
+@Transactional
 public class PaymentServiceImpl implements PaymentService {
     private final PaymentRepository repo;
     private final WebClient webClient;
+    private Map<String, PaymentValidateDto> comparePaymentDatas = new HashMap<>();
 
     @Value("${SPRING_WEBHOOK_SECRET}")
     private String WEBHOOK_SECRET;
 
+    @Value("${SPRING_STORE_ID}")
+    private String storeId;
+
     @Override
     public void processWebhook(String webhookId, String webhookSignature, String webhookTimestamp, String payload) {
         verifyTimeStamp(webhookTimestamp); // 타임스탬프 검증
-        String exceptedSignature = generateSignature(webhookId, webhookTimestamp, payload);
+        try {
+            WebhookVerifier verifier = new WebhookVerifier(WEBHOOK_SECRET);
+            Webhook webhook = verifier.verify(payload, webhookId, webhookSignature, webhookTimestamp);
+            if (webhook == null) {
+                log.error("웹훅 검증 실패");
+                throw new RuntimeException("Not verifier Web Hook");
+            }
+            log.info("웹훅 검증 완료");
+        } catch (Exception e) {
+            log.error("유효하지 않은 시그니처", e);
+        }
 
-        if (!verfiySignature(exceptedSignature, exceptedSignature))
-            throw new IllegalArgumentException("유효하지 않은 시그니처");
+        // String exceptedSignature = generateSignature(webhookId, webhookTimestamp,
+        // payload);
+
+        // if (!verfiySignature(exceptedSignature, webhookSignature))
+        // throw new IllegalArgumentException("유효하지 않은 시그니처");
 
         WebhookPayload data = parsePayload(payload);
         handleEvent(data);
     }
 
-    @Override
-    public String generateSignature(String webhookId, String webhookTimestamp, String payload) {
-        try {
-            String dataToSign = String.join(".", webhookId, webhookTimestamp, payload); // 데이터 조합
-            Mac mac = Mac.getInstance("HmacSHA256"); // HMAC-SHA256 알고리즘 사용
-            mac.init(new SecretKeySpec(WEBHOOK_SECRET.getBytes(), "HmacSHA256")); // 시크릿 키 설정
-            return Base64.getEncoder().encodeToString(mac.doFinal(dataToSign.getBytes())); // 시그니처 생성
-        } catch (Exception e) {
-            throw new RuntimeException("시그니처 생성 중 오류 발생", e);
-        }
-    }
+    // 직접 시그니처 검증 -> sdk 사용해서 검증
+    // @Override
+    // public String generateSignature(String webhookId, String webhookTimestamp, String payload) {
+    //     try {
+    //         String toSign = String.format("%s.%s.%s", webhookId, webhookTimestamp, payload);
+    //         Mac sha512Hmac = Mac.getInstance("HmacSHA256");
+    //         SecretKeySpec keySpec = new SecretKeySpec(WEBHOOK_SECRET.split("_")[1].getBytes(StandardCharsets.UTF_8),
+    //                 "HmacSHA256");
+    //         sha512Hmac.init(keySpec);
+    //         byte[] macData = sha512Hmac.doFinal(toSign.getBytes(StandardCharsets.UTF_8));
+    //         String signature = Base64.getEncoder().encodeToString(macData);
+    //         return String.format("v1,%s", signature);
+    //     } catch (Exception e) {
+    //         throw new RuntimeException("시그니처 생성 중 오류 발생", e);
+    //     }
+    // }
 
     @Override
     public void handleEvent(WebhookPayload data) {
@@ -71,17 +101,85 @@ public class PaymentServiceImpl implements PaymentService {
                 log.info("결제창 오픈 처리");
                 break;
             case "Paid":
-                log.info("결제 완료 이벤트 처리");
-                /// TODO : 결제 금액 검증 & OrderState 변경 & SSE 전송
+                Mono<JsonNode> res = webClient.get()
+                        .uri("/" + paymentId)
+                        .retrieve()
+                        .bodyToMono(JsonNode.class);
+                // .block();
+                res.subscribe(response -> {
+                    if (response == null || !response.get("status").asText().equals("PAID")) {
+                        log.error("PortOne response is null or Payment Failed : {}", paymentId);
+                        throw new IllegalArgumentException("결제 데이터 오류");
+                        // 오류시 카프카 이벤트 발송 필요
+                    }
+                    PaymentValidateDto compareDto = extractPaymentData(response);
+                    if (compareDto.equals(comparePaymentDatas.get(paymentId))) {
+                        Instant instant = Instant.parse(response.get("paidAt").asText());
+                        LocalDateTime dateTime = LocalDateTime.ofInstant(instant, ZoneId.of("Asia/Seoul"));
+                        PaymentMethod method = convertStringToMethod(
+                                response.get("method").get("type").asText());
+                        String applNum = null;
+                        switch (method) {
+                            case CARD:
+                                applNum = response.get("method").get("approvalNumber").asText();
+                                break;
+                            case EASYPAY:
+                                method = convertStringToMethod(response.get("method").get("provider").asText());
+                                break;
+                        }
+                        try {
+                            Payment payment = Payment.builder()
+                                    .paymentId(paymentId)
+                                    .method(method)
+                                    .price(compareDto.getTotalAmount())
+                                    .count(compareDto.getTotalCount())
+                                    .price(compareDto.getTotalAmount())
+                                    .status(PaymentStatus.valueOf(response.get("status").asText()))
+                                    .at(dateTime)
+                                    .pg(response.get("channel").get("pgProvider").asText())
+                                    .txId(response.get("transactionId").asText())
+                                    .applNum(applNum)
+                                    .build();
+                            repo.save(payment);
+                            comparePaymentDatas.remove(paymentId);
+                            log.info("save entity");
+                        } catch (Exception e) {
+                            log.error("포트원 리스폰스 잭슨 파싱 확인 필요");
+                            cancelPay(paymentId);
+                            log.error("Entity Error in Payment-service : {}", e);
+
+                        }
+
+                        // 여기에 카프카 이벤트 발송 필요
+                    } else {
+                        // 실패시 여기에 실패 이벤트 발송 필요
+                        // log.info("요청 dto : {} ", comparePaymentDatas.get(paymentId));
+                        // log.info("실제 dto : {} ", compareDto);
+                        cancelPay(paymentId);
+
+                        throw new IllegalArgumentException("결제 정보 불일치");
+                    }
+                });
+
                 break;
             case "Cancelled":
-                log.info("결제 취소 이벤트 처리");
-                break;
+                log.info("결제 취소 후 로직");
+                Payment payment = repo.findById(paymentId).orElseThrow(() -> new IllegalArgumentException("결제 정보 불일치"));
+                payment.setStatus(PaymentStatus.CANCELLED);
+                // 여기에 결제 취소시 카프카 이벤트 발송 필요 할수도?
 
+            case "Failed":
+                if (comparePaymentDatas.containsKey(paymentId))
+                    comparePaymentDatas.remove(paymentId);
+                log.info("결제 실패 알림");
+                break;
             default:
                 log.info("알수 없는 이벤트 : {}", type);
                 break;
         }
+    }
+    public PaymentMethod convertStringToMethod(String s){
+        return PaymentMethod.valueOf(s.replace("PaymentMethod", "").toUpperCase());
     }
 
     @Override
@@ -94,10 +192,13 @@ public class PaymentServiceImpl implements PaymentService {
         }
     }
 
-    @Override
-    public boolean verfiySignature(String exceptedSignature, String actualSignature) {
-        return exceptedSignature.equals(actualSignature);
-    }
+    // sdk 검증방식으로 변경
+    // @Override
+    // public boolean verfiySignature(String exceptedSignature, String actualSignature) {
+    //     log.info("시그니처 웹훅 : {}", actualSignature);
+    //     log.info("시그니처 생성 : {}", exceptedSignature);
+    //     return exceptedSignature.equals(actualSignature);
+    // }
 
     @Override
     public void verifyTimeStamp(String timestamp) {
@@ -108,63 +209,14 @@ public class PaymentServiceImpl implements PaymentService {
     }
 
     @Override
-    public PaymentStatus payValidation(PaymentValidateDto dto) {
-        JsonNode response = webClient.get()
-                .uri("/" + dto.getPaymentId())
-                .retrieve()
-                .bodyToMono(JsonNode.class)
-                .block();
-        if (response == null || !response.get("status").asText().equals("PAID") ) {
-            log.error("PortOne response is null or Payment Failed : {}", dto.getPaymentId());
-            return PaymentStatus.FAILED;
-        }
-        PaymentValidateDto compareDto = extractPaymentData(response);
-            log.info("dt entity {} ", compareDto);
-            log.info("dt2 entity {} ", dto);
-        
-        if(compareDto.equals(dto)){
-            Instant instant = Instant.parse(response.get("paidAt").asText());
-            LocalDateTime dateTime = LocalDateTime.ofInstant(instant, ZoneId.of("UTC"));
-            PaymentMethod method = convertStringToPaymentMethod(response.get("method").get("type").asText());
-        
-            Payment payment = Payment.builder()
-                                            .paymentId(dto.getPaymentId())
-                                            .method(method)
-                                            .price(compareDto.getTotalAmount())
-                                            .count(compareDto.getTotalCount())
-                                            .price(compareDto.getTotalAmount())
-                                            .at(dateTime)
-                                            .pg(response.get("channel").get("pgProvider").asText())
-                                            .txId(response.get("transactionId").asText())
-                                            .applNum(response.get("method").get("approvalNumber").asText())
-                                            .build();
-            repo.save(payment);
-            log.info("save entity");
-            return PaymentStatus.PAID;
-        }
-            log.info("failed entity");
-
-        return PaymentStatus.FAILED;
-
-        // response.subscribe(
-        // data-> {
-        // log.info("id : {}", data.get("id").asText());
-        // log.info("email : {} ", data.get("customer").get("email").asText());
-        // log.info("count : {}", data.get("products").get(0).get("quantity").asLong());
-        // log.info("amount : {}", data.get("amount").get("total").asLong());
-        // },
-        // error-> log.error("paymentInfo Error : {}", error.getMessage())
-        // );
-        // response.doOnSuccess(data->{
-        // log.info("on Success : {} ", data);
-        // });
-
-        // return PaymentStatus.PAID;
+    public PaymentValidateDto addPayValidationData(PaymentValidateDto dto) {
+        comparePaymentDatas.put(dto.getPaymentId(), dto);
+        return dto;
     }
 
     private PaymentValidateDto extractPaymentData(JsonNode response) {
-        PaymentMethod method = convertStringToPaymentMethod(response.get("method").get("type").asText());
-       
+        PaymentMethod method = convertStringToMethod(response.get("method").get("type").asText());
+
         String id = response.get("id").asText();
         String email = response.get("customer").get("email").asText();
         int quantity = response.get("products").get(0).get("quantity").asInt();
@@ -173,23 +225,29 @@ public class PaymentServiceImpl implements PaymentService {
         return PaymentValidateDto.builder()
                 .paymentId(id)
                 .email(email)
-                .method(method)
+                // .method(method)
                 .totalCount(quantity)
                 .totalAmount(totalAmount)
                 .build();
     }
+    @Override
+    public PaymentStatus cancelPay(String paymentId) {
+        Map<String, Object> cancelRequest = new HashMap<>();
+        cancelRequest.put("storeId", storeId);
+        cancelRequest.put("reason", "승인 취소");
 
-    public PaymentMethod convertStringToPaymentMethod(String method){
-        String conv[] = method.split("d",2);
-        log.info("method : {}", conv[1]);
-        switch (conv[1]) {
-            case "Card":
-                return PaymentMethod.CARD;
-            case "EasyPay":
-                return PaymentMethod.EASY_PAY;
-            default:
-                return PaymentMethod.CARD;
-        }
+        Mono<JsonNode> res = webClient.post()
+                .uri("/" + paymentId + "/cancel")
+                .bodyValue(cancelRequest)
+                .retrieve()
+                .bodyToMono(JsonNode.class);
+        res.subscribe(data -> {
+            log.info("결제 취소 완료 : {}", data.get(paymentId));
+        }, error -> {
+            log.error("Error In Pay Cancled : {} ", error.getMessage());
+            throw new RuntimeException("In Payment Cancelled Error : ", error);
+        });
+
+        return PaymentStatus.CANCELLED;
     }
-
 }

@@ -4,6 +4,7 @@ import java.time.LocalDateTime;
 
 
 import com.inkcloud.payment_service.enums.PaymentMethod;
+import com.inkcloud.payment_service.enums.PaymentStatus;
 
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
@@ -39,5 +40,8 @@ public class Payment {
     private String txId;             // 거래번호
     @Column(name = "appl_num")
     private String applNum;         // 승인번호
+    
+    @Enumerated(EnumType.STRING)
+    private PaymentStatus status;
 
 }

@@ -20,7 +20,7 @@ import lombok.ToString;
 public class PaymentValidateDto {
     String paymentId;
     String email;
-    PaymentMethod method;
+    // PaymentMethod method;
     int totalCount;
     int totalAmount;
 
@@ -34,8 +34,8 @@ public class PaymentValidateDto {
         return totalCount == that.totalCount &&
                 totalAmount == that.totalAmount &&
                 Objects.equals(paymentId, that.paymentId) &&
-                Objects.equals(email, that.email) &&
-                Objects.equals(method, that.method);
+                Objects.equals(email, that.email);
+                // Objects.equals(method, that.method);
     }
 
 }
