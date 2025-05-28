@@ -76,19 +76,22 @@ public class PaymentServiceImpl implements PaymentService {
 
     // 직접 시그니처 검증 -> sdk 사용해서 검증
     // @Override
-    // public String generateSignature(String webhookId, String webhookTimestamp, String payload) {
-    //     try {
-    //         String toSign = String.format("%s.%s.%s", webhookId, webhookTimestamp, payload);
-    //         Mac sha512Hmac = Mac.getInstance("HmacSHA256");
-    //         SecretKeySpec keySpec = new SecretKeySpec(WEBHOOK_SECRET.split("_")[1].getBytes(StandardCharsets.UTF_8),
-    //                 "HmacSHA256");
-    //         sha512Hmac.init(keySpec);
-    //         byte[] macData = sha512Hmac.doFinal(toSign.getBytes(StandardCharsets.UTF_8));
-    //         String signature = Base64.getEncoder().encodeToString(macData);
-    //         return String.format("v1,%s", signature);
-    //     } catch (Exception e) {
-    //         throw new RuntimeException("시그니처 생성 중 오류 발생", e);
-    //     }
+    // public String generateSignature(String webhookId, String webhookTimestamp,
+    // String payload) {
+    // try {
+    // String toSign = String.format("%s.%s.%s", webhookId, webhookTimestamp,
+    // payload);
+    // Mac sha512Hmac = Mac.getInstance("HmacSHA256");
+    // SecretKeySpec keySpec = new
+    // SecretKeySpec(WEBHOOK_SECRET.split("_")[1].getBytes(StandardCharsets.UTF_8),
+    // "HmacSHA256");
+    // sha512Hmac.init(keySpec);
+    // byte[] macData = sha512Hmac.doFinal(toSign.getBytes(StandardCharsets.UTF_8));
+    // String signature = Base64.getEncoder().encodeToString(macData);
+    // return String.format("v1,%s", signature);
+    // } catch (Exception e) {
+    // throw new RuntimeException("시그니처 생성 중 오류 발생", e);
+    // }
     // }
 
     @Override
@@ -101,33 +104,32 @@ public class PaymentServiceImpl implements PaymentService {
                 log.info("결제창 오픈 처리");
                 break;
             case "Paid":
-                Mono<JsonNode> res = webClient.get()
-                        .uri("/" + paymentId)
-                        .retrieve()
-                        .bodyToMono(JsonNode.class);
-                // .block();
-                res.subscribe(response -> {
-                    if (response == null || !response.get("status").asText().equals("PAID")) {
-                        log.error("PortOne response is null or Payment Failed : {}", paymentId);
-                        throw new IllegalArgumentException("결제 데이터 오류");
-                        // 오류시 카프카 이벤트 발송 필요
-                    }
-                    PaymentValidateDto compareDto = extractPaymentData(response);
-                    if (compareDto.equals(comparePaymentDatas.get(paymentId))) {
-                        Instant instant = Instant.parse(response.get("paidAt").asText());
-                        LocalDateTime dateTime = LocalDateTime.ofInstant(instant, ZoneId.of("Asia/Seoul"));
-                        PaymentMethod method = convertStringToMethod(
-                                response.get("method").get("type").asText());
-                        String applNum = null;
-                        switch (method) {
-                            case CARD:
-                                applNum = response.get("method").get("approvalNumber").asText();
-                                break;
-                            case EASYPAY:
-                                method = convertStringToMethod(response.get("method").get("provider").asText());
-                                break;
+                try {
+                    Mono<JsonNode> res = webClient.get()
+                            .uri("/" + paymentId)
+                            .retrieve()
+                            .bodyToMono(JsonNode.class);
+                    res.subscribe(response -> {
+                        if (response == null || !response.get("status").asText().equals("PAID")) {
+                            log.error("PortOne response is null or Payment Failed : {}", paymentId);
+                            throw new IllegalArgumentException("결제 데이터 오류");
+                            // 오류시 카프카 이벤트 발송 필요
                         }
-                        try {
+                        PaymentValidateDto compareDto = extractPaymentData(response);
+                        if (compareDto.equals(comparePaymentDatas.get(paymentId))) {
+                            Instant instant = Instant.parse(response.get("paidAt").asText());
+                            LocalDateTime dateTime = LocalDateTime.ofInstant(instant, ZoneId.of("Asia/Seoul"));
+                            PaymentMethod method = convertStringToMethod(
+                                    response.get("method").get("type").asText());
+                            String applNum = null;
+                            switch (method) {
+                                case CARD:
+                                    applNum = response.get("method").get("approvalNumber").asText();
+                                    break;
+                                case EASYPAY:
+                                    method = convertStringToMethod(response.get("method").get("provider").asText());
+                                    break;
+                            }
                             Payment payment = Payment.builder()
                                     .paymentId(paymentId)
                                     .method(method)
@@ -143,24 +145,16 @@ public class PaymentServiceImpl implements PaymentService {
                             repo.save(payment);
                             comparePaymentDatas.remove(paymentId);
                             log.info("save entity");
-                        } catch (Exception e) {
-                            log.error("포트원 리스폰스 잭슨 파싱 확인 필요");
-                            cancelPay(paymentId);
-                            log.error("Entity Error in Payment-service : {}", e);
 
-                        }
-
-                        // 여기에 카프카 이벤트 발송 필요
-                    } else {
-                        // 실패시 여기에 실패 이벤트 발송 필요
-                        // log.info("요청 dto : {} ", comparePaymentDatas.get(paymentId));
-                        // log.info("실제 dto : {} ", compareDto);
-                        cancelPay(paymentId);
-
-                        throw new IllegalArgumentException("결제 정보 불일치");
-                    }
-                });
-
+                            // 여기에 카프카 이벤트 발송 필요
+                        } else
+                            throw new IllegalArgumentException("결제 정보 불일치");
+                    });
+                } catch (Exception e) {
+                    log.error("포트원 리스폰스 잭슨 파싱 확인 필요");
+                    cancelPay(paymentId);
+                    log.error("Entity Error in Payment-service : {}", e);
+                }
                 break;
             case "Cancelled":
                 log.info("결제 취소 후 로직");
@@ -178,7 +172,8 @@ public class PaymentServiceImpl implements PaymentService {
                 break;
         }
     }
-    public PaymentMethod convertStringToMethod(String s){
+
+    public PaymentMethod convertStringToMethod(String s) {
         return PaymentMethod.valueOf(s.replace("PaymentMethod", "").toUpperCase());
     }
 
@@ -194,10 +189,11 @@ public class PaymentServiceImpl implements PaymentService {
 
     // sdk 검증방식으로 변경
     // @Override
-    // public boolean verfiySignature(String exceptedSignature, String actualSignature) {
-    //     log.info("시그니처 웹훅 : {}", actualSignature);
-    //     log.info("시그니처 생성 : {}", exceptedSignature);
-    //     return exceptedSignature.equals(actualSignature);
+    // public boolean verfiySignature(String exceptedSignature, String
+    // actualSignature) {
+    // log.info("시그니처 웹훅 : {}", actualSignature);
+    // log.info("시그니처 생성 : {}", exceptedSignature);
+    // return exceptedSignature.equals(actualSignature);
     // }
 
     @Override
@@ -230,6 +226,7 @@ public class PaymentServiceImpl implements PaymentService {
                 .totalAmount(totalAmount)
                 .build();
     }
+
     @Override
     public PaymentStatus cancelPay(String paymentId) {
         Map<String, Object> cancelRequest = new HashMap<>();
