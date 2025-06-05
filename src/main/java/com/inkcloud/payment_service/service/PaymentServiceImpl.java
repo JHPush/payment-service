@@ -10,13 +10,14 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.kafka.annotation.KafkaListener;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.web.reactive.function.client.WebClient;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.inkcloud.payment_service.domain.Payment;
-import com.inkcloud.payment_service.dto.OrderStartEvent;
-import com.inkcloud.payment_service.dto.PaymentSuccessEvent;
+import com.inkcloud.payment_service.dto.PaymentEvent;
 import com.inkcloud.payment_service.dto.PaymentValidateDto;
 import com.inkcloud.payment_service.dto.WebhookPayload;
 import com.inkcloud.payment_service.enums.PaymentMethod;
@@ -38,7 +39,7 @@ public class PaymentServiceImpl implements PaymentService {
     private final PaymentRepository repo;
     private final WebClient webClient;
     private Map<String, PaymentValidateDto> comparePaymentDatas = new HashMap<>();
-    private final KafkaTemplate<String, PaymentSuccessEvent> kafkaTemplate;
+    private final KafkaTemplate<String, PaymentEvent> kafkaTemplate;
 
     @Value("${SPRING_WEBHOOK_SECRET}")
     private String WEBHOOK_SECRET;
@@ -141,12 +142,13 @@ public class PaymentServiceImpl implements PaymentService {
                             repo.save(payment);
                             log.info("save entity");
 
-                            PaymentSuccessEvent event = new PaymentSuccessEvent(paymentId,comparePaymentDatas.get(paymentId).getOrderId(), "success");
-                            comparePaymentDatas.remove(paymentId);
-                            
-                            kafkaTemplate.send("payment-success", event);
+                            PaymentEvent event = new PaymentEvent();
+                            event.setId(paymentId);
+                            event.setOrder(comparePaymentDatas.get(paymentId));
 
-                            // 여기에 카프카 이벤트 발송 필요
+                            kafkaTemplate.send("payment-success", event);
+                            comparePaymentDatas.remove(paymentId);
+
                         } else
                             throw new IllegalArgumentException("결제 정보 불일치");
                     });
@@ -249,10 +251,10 @@ public class PaymentServiceImpl implements PaymentService {
     }
 
     @KafkaListener(topics = "order-verify", groupId = "order-group")
-    public void paymentVerify(String event) throws Exception{
+    public void paymentVerify(String event) throws Exception {
         log.info("kafka Consumer : Payment-service, receive event : {}", event);
         try {
-            OrderStartEvent ev = new ObjectMapper().readValue(event,OrderStartEvent.class);
+            PaymentEvent ev = new ObjectMapper().readValue(event, PaymentEvent.class);
             log.info("kafka mapping success in Payment-Service : {}", event);
             comparePaymentDatas.put(ev.getOrder().getPaymentId(), ev.getOrder());
         } catch (Exception e) {
