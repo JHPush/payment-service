@@ -1,26 +1,22 @@
 package com.inkcloud.payment_service.service;
 
-import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
-import java.time.format.DateTimeFormatter;
-import java.util.Base64;
 import java.util.HashMap;
 import java.util.Map;
 
-import javax.crypto.Mac;
-import javax.crypto.spec.SecretKeySpec;
-
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.http.HttpStatus;
+import org.springframework.kafka.annotation.KafkaListener;
+import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.stereotype.Service;
-import org.springframework.web.reactive.function.BodyInserters;
 import org.springframework.web.reactive.function.client.WebClient;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.inkcloud.payment_service.domain.Payment;
+import com.inkcloud.payment_service.dto.OrderStartEvent;
+import com.inkcloud.payment_service.dto.PaymentSuccessEvent;
 import com.inkcloud.payment_service.dto.PaymentValidateDto;
 import com.inkcloud.payment_service.dto.WebhookPayload;
 import com.inkcloud.payment_service.enums.PaymentMethod;
@@ -42,6 +38,7 @@ public class PaymentServiceImpl implements PaymentService {
     private final PaymentRepository repo;
     private final WebClient webClient;
     private Map<String, PaymentValidateDto> comparePaymentDatas = new HashMap<>();
+    private final KafkaTemplate<String, PaymentSuccessEvent> kafkaTemplate;
 
     @Value("${SPRING_WEBHOOK_SECRET}")
     private String WEBHOOK_SECRET;
@@ -66,7 +63,6 @@ public class PaymentServiceImpl implements PaymentService {
 
         // String exceptedSignature = generateSignature(webhookId, webhookTimestamp,
         // payload);
-
         // if (!verfiySignature(exceptedSignature, webhookSignature))
         // throw new IllegalArgumentException("유효하지 않은 시그니처");
 
@@ -133,18 +129,22 @@ public class PaymentServiceImpl implements PaymentService {
                             Payment payment = Payment.builder()
                                     .paymentId(paymentId)
                                     .method(method)
-                                    .price(compareDto.getTotalAmount())
-                                    .count(compareDto.getTotalCount())
-                                    .price(compareDto.getTotalAmount())
+                                    .price(compareDto.getPrice())
+                                    .count(compareDto.getQuantity())
                                     .status(PaymentStatus.valueOf(response.get("status").asText()))
                                     .at(dateTime)
                                     .pg(response.get("channel").get("pgProvider").asText())
                                     .txId(response.get("transactionId").asText())
                                     .applNum(applNum)
+                                    .orderId(comparePaymentDatas.get(paymentId).getOrderId())
                                     .build();
                             repo.save(payment);
-                            comparePaymentDatas.remove(paymentId);
                             log.info("save entity");
+
+                            PaymentSuccessEvent event = new PaymentSuccessEvent(paymentId,comparePaymentDatas.get(paymentId).getOrderId(), "success");
+                            comparePaymentDatas.remove(paymentId);
+                            
+                            kafkaTemplate.send("payment-success", event);
 
                             // 여기에 카프카 이벤트 발송 필요
                         } else
@@ -222,8 +222,8 @@ public class PaymentServiceImpl implements PaymentService {
                 .paymentId(id)
                 .email(email)
                 // .method(method)
-                .totalCount(quantity)
-                .totalAmount(totalAmount)
+                .quantity(quantity)
+                .price(totalAmount)
                 .build();
     }
 
@@ -246,5 +246,17 @@ public class PaymentServiceImpl implements PaymentService {
         });
 
         return PaymentStatus.CANCELLED;
+    }
+
+    @KafkaListener(topics = "order-verify", groupId = "order-group")
+    public void paymentVerify(String event) throws Exception{
+        log.info("kafka Consumer : Payment-service, receive event : {}", event);
+        try {
+            OrderStartEvent ev = new ObjectMapper().readValue(event,OrderStartEvent.class);
+            log.info("kafka mapping success in Payment-Service : {}", event);
+            comparePaymentDatas.put(ev.getOrder().getPaymentId(), ev.getOrder());
+        } catch (Exception e) {
+            throw e;
+        }
     }
 }

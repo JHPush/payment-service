@@ -46,7 +46,7 @@ public class PaymentController {
         return new ResponseEntity<>(dto, HttpStatus.OK);
     }
 
-    // 주문 서비스 제작시 비동기 처리 고려
+    // 주문 서비스 제작시 비동기 처리 고려 --> 관리자 기능때문에 남겨놔야함
     @PutMapping
     public ResponseEntity<String> cancelPayment(@RequestBody Map<String,String> req) {
         paymentService.cancelPay(req.get("payment_id"));

@@ -19,20 +19,23 @@ import reactor.core.publisher.Mono;
 public class PaymentConfig {
     @Value("${SPRING_PORTONE_SECRET}")
     private String portOneSecret;
+    @Value("${SPRING_API_GATEWAY_CORS}")
+    private String apiGateway;
+    
 
-    @Bean
-    public WebMvcConfigurer corsConfigurer() {
-        return new WebMvcConfigurer() {
-            @Override
-            public void addCorsMappings(CorsRegistry registry) {
-                registry.addMapping("/api/**") // 적용할 API 경로
-                        .allowedOrigins("http://localhost:3000") // 리액트 주소
-                        .allowedMethods("GET", "POST", "PUT", "DELETE")
-                        .allowedHeaders("*")
-                        .allowCredentials(true);
-            }
-        };
-    }
+    // @Bean
+    // public WebMvcConfigurer corsConfigurer() {
+    //     return new WebMvcConfigurer() {
+    //         @Override
+    //         public void addCorsMappings(CorsRegistry registry) {
+    //             registry.addMapping("/api/**") // 적용할 API 경로
+    //                     .allowedOrigins("http://localhost:3000") // 리액트 주소 -> api 게이트웨이 주소
+    //                     .allowedMethods("GET", "POST", "PUT", "DELETE")
+    //                     .allowedHeaders("*")
+    //                     .allowCredentials(true);
+    //         }
+    //     };
+    // }
 
     @Bean
     public WebClient webClient(WebClient.Builder builder) {

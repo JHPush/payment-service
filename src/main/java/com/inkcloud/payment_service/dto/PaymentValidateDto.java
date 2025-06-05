@@ -18,11 +18,11 @@ import lombok.ToString;
 @AllArgsConstructor
 @ToString
 public class PaymentValidateDto {
-    String paymentId;
+    int price;
+    int quantity;
     String email;
-    // PaymentMethod method;
-    int totalCount;
-    int totalAmount;
+    String paymentId;
+    String orderId;
 
     @Override
     public boolean equals(Object o) {
@@ -31,8 +31,8 @@ public class PaymentValidateDto {
         if (o == null || getClass() != o.getClass())
             return false;
         PaymentValidateDto that = (PaymentValidateDto) o;
-        return totalCount == that.totalCount &&
-                totalAmount == that.totalAmount &&
+        return quantity == that.quantity &&
+                price == that.price &&
                 Objects.equals(paymentId, that.paymentId) &&
                 Objects.equals(email, that.email);
                 // Objects.equals(method, that.method);
