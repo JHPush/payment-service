@@ -11,8 +11,6 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.kafka.annotation.KafkaListener;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.support.TransactionSynchronization;
-import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.web.reactive.function.client.WebClient;
 
 import com.fasterxml.jackson.databind.JsonNode;
@@ -234,18 +232,21 @@ public class PaymentServiceImpl implements PaymentService {
     }
 
     @Override
-    public PaymentStatus cancelPay(String paymentId) {
+    public PaymentStatus cancelPay(String orderId) {
+
+        Payment p = repo.findByOrderId(orderId);
+
         Map<String, Object> cancelRequest = new HashMap<>();
         cancelRequest.put("storeId", storeId);
         cancelRequest.put("reason", "승인 취소");
 
         Mono<JsonNode> res = webClient.post()
-                .uri("/" + paymentId + "/cancel")
+                .uri("/" + p.getPaymentId() + "/cancel")
                 .bodyValue(cancelRequest)
                 .retrieve()
                 .bodyToMono(JsonNode.class);
         res.subscribe(data -> {
-            log.info("결제 취소 완료 : {}", data.get(paymentId));
+            log.info("결제 취소 완료 : {}", data.get(p.getPaymentId()));
         }, error -> {
             log.error("Error In Pay Cancled : {} ", error.getMessage());
             throw new RuntimeException("In Payment Cancelled Error : ", error);

@@ -10,7 +10,14 @@ spring:
   profiles:
     active:
     - ${SPRING_PROFILES_ACTIVE}
-
+  main:
+    web-application-type: servlet
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          issuer-uri: ${SPRING_KEYCLOAK_URL}/realms/inkcloud
+          jwk-set-uri: ${spring.security.oauth2.resourceserver.jwt.issuer-uri}/protocol/openid-connect/certs
 
   # -------------------------------------------------------------------
   #  Kafka 설정
@@ -54,9 +61,12 @@ spring:
 logging:
   level:   
     "[org.hibernate.SQL]|": debug            # 로그로 출력
-    "[org.hibernate.orm.jdbc.bind]": trace   # 중요 : 바인딩된 값 출력
-    "[com.inkcloud.payment_service]": trace
-
+    "[org.hibernate.orm.jdbc.bind]": debug   # 중요 : 바인딩된 값 출력
+    "[com.inkcloud.payment_service]": debug
+    "[org.springframework.web.filter.CommonsRequestLoggingFilter]": debug  # 요청 로그
+    "[org.springframework.security.web.authentication]": debug
+    "[org.springframework.security.oauth2.server.resource]": debug
+    "[org.springframework.security.oauth2.jwt]": debug
 
 
 # -------------------------------------------------------------------

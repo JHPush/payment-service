@@ -28,7 +28,7 @@ public interface PaymentService {
     // 결제창 오픈시 검증 데이터 저장 -> 결제 완료시 삭제
     abstract PaymentValidateDto addPayValidationData(PaymentValidateDto paymentId);
 
-    abstract PaymentStatus cancelPay(String paymentId);
+    abstract PaymentStatus cancelPay(String orderId);
 
 
 }
