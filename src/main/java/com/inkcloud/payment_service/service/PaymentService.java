@@ -1,7 +1,8 @@
 package com.inkcloud.payment_service.service;
 
 
-import com.inkcloud.payment_service.dto.PaymentValidateDto;
+import com.inkcloud.payment_service.domain.Payment;
+import com.inkcloud.payment_service.dto.PaymentDto;
 import com.inkcloud.payment_service.dto.WebhookPayload;
 import com.inkcloud.payment_service.enums.PaymentStatus;
 
@@ -26,9 +27,19 @@ public interface PaymentService {
     abstract void handleEvent(WebhookPayload data);
 
     // 결제창 오픈시 검증 데이터 저장 -> 결제 완료시 삭제
-    abstract PaymentValidateDto addPayValidationData(PaymentValidateDto paymentId);
+    // abstract PaymentValidateDto addPayValidationData(PaymentValidateDto paymentId);
 
     abstract PaymentStatus cancelPay(String orderId);
+    abstract PaymentDto retreivePayment(String orderId);
 
+    default PaymentDto entityToDto(Payment payment){
+        return PaymentDto.builder()
+                                .method(payment.getMethod())
+                                .price(payment.getPrice())
+                                .count(payment.getCount())
+                                .at(payment.getAt())
+                                .pg(payment.getPg())
+                                .build();
+    }
 
 }

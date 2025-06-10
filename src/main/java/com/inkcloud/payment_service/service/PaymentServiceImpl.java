@@ -16,6 +16,7 @@ import org.springframework.web.reactive.function.client.WebClient;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.inkcloud.payment_service.domain.Payment;
+import com.inkcloud.payment_service.dto.PaymentDto;
 import com.inkcloud.payment_service.dto.PaymentEvent;
 import com.inkcloud.payment_service.dto.PaymentValidateDto;
 import com.inkcloud.payment_service.dto.WebhookPayload;
@@ -206,11 +207,11 @@ public class PaymentServiceImpl implements PaymentService {
             throw new IllegalArgumentException("타임스탬프 만료");
     }
 
-    @Override
-    public PaymentValidateDto addPayValidationData(PaymentValidateDto dto) {
-        comparePaymentDatas.put(dto.getPaymentId(), dto);
-        return dto;
-    }
+    // @Override
+    // public PaymentValidateDto addPayValidationData(PaymentValidateDto dto) {
+    //     comparePaymentDatas.put(dto.getPaymentId(), dto);
+    //     return dto;
+    // }
 
     private PaymentValidateDto extractPaymentData(JsonNode response) {
         PaymentMethod method = convertStringToMethod(response.get("method").get("type").asText());
@@ -253,6 +254,18 @@ public class PaymentServiceImpl implements PaymentService {
         });
 
         return PaymentStatus.CANCELLED;
+    }
+    
+
+    @Override
+    public PaymentDto retreivePayment(String orderId) {
+        log.info("===== order Id : {} ", orderId);
+        Payment pay = repo.findByOrderId(orderId);
+        log.info("payment Info : {} ", pay.getPaymentId());
+        
+        PaymentDto dto = entityToDto(pay);
+        log.info("pay dto : {} ", dto);
+        return dto;
     }
 
     @KafkaListener(topics = "order-verify", groupId = "order-group")
