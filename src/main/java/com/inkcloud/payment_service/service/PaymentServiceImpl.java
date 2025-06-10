@@ -5,6 +5,7 @@ import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.stream.IntStream;
 
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.kafka.annotation.KafkaListener;
@@ -113,6 +114,7 @@ public class PaymentServiceImpl implements PaymentService {
                             // 오류시 카프카 이벤트 발송 필요
                         }
                         PaymentValidateDto compareDto = extractPaymentData(response);
+                        log.info("compare dto =================== {} ", compareDto);
                         if (compareDto.equals(comparePaymentDatas.get(paymentId))) {
                             Instant instant = Instant.parse(response.get("paidAt").asText());
                             LocalDateTime dateTime = LocalDateTime.ofInstant(instant, ZoneId.of("Asia/Seoul"));
@@ -217,7 +219,9 @@ public class PaymentServiceImpl implements PaymentService {
 
         String id = response.get("id").asText();
         String email = response.get("customer").get("email").asText();
-        int quantity = response.get("products").get(0).get("quantity").asInt();
+        int quantity = IntStream.range(0, response.get("products").size())
+                .map(i -> response.get("products").get(i).get("quantity").asInt()).sum();
+
         int totalAmount = response.get("amount").get("total").asInt();
 
         return PaymentValidateDto.builder()
