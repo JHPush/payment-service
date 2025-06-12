@@ -39,7 +39,7 @@ public class PaymentServiceImpl implements PaymentService {
     private final PaymentRepository repo;
     private final WebClient webClient;
     private Map<String, PaymentValidateDto> comparePaymentDatas = new HashMap<>();
-    private final KafkaTemplate<String, PaymentEvent> kafkaTemplate;
+    private final KafkaTemplate<String, Object> kafkaTemplate;
 
     @Value("${SPRING_WEBHOOK_SECRET}")
     private String WEBHOOK_SECRET;
@@ -163,12 +163,17 @@ public class PaymentServiceImpl implements PaymentService {
                 log.info("결제 취소 후 로직");
                 Payment payment = repo.findById(paymentId).orElseThrow(() -> new IllegalArgumentException("결제 정보 불일치"));
                 payment.setStatus(PaymentStatus.CANCELLED);
-                // 여기에 결제 취소시 카프카 이벤트 발송 필요 할수도?
-
-            case "Failed":
-                if (comparePaymentDatas.containsKey(paymentId))
+                if (comparePaymentDatas.containsKey(paymentId)){
                     comparePaymentDatas.remove(paymentId);
+                }
+                break;
+            case "Failed":
+                kafkaTemplate.send("order-failed-payment-refund", comparePaymentDatas.get(paymentId).getOrderId());
                 log.info("결제 실패 알림");
+                
+                if (comparePaymentDatas.containsKey(paymentId)){
+                    comparePaymentDatas.remove(paymentId);
+                }
                 break;
             default:
                 log.info("알수 없는 이벤트 : {}", type);
@@ -209,8 +214,8 @@ public class PaymentServiceImpl implements PaymentService {
 
     // @Override
     // public PaymentValidateDto addPayValidationData(PaymentValidateDto dto) {
-    //     comparePaymentDatas.put(dto.getPaymentId(), dto);
-    //     return dto;
+    // comparePaymentDatas.put(dto.getPaymentId(), dto);
+    // return dto;
     // }
 
     private PaymentValidateDto extractPaymentData(JsonNode response) {
@@ -255,14 +260,13 @@ public class PaymentServiceImpl implements PaymentService {
 
         return PaymentStatus.CANCELLED;
     }
-    
 
     @Override
     public PaymentDto retreivePayment(String orderId) {
         log.info("===== order Id : {} ", orderId);
         Payment pay = repo.findByOrderId(orderId);
         log.info("payment Info : {} ", pay.getPaymentId());
-        
+
         PaymentDto dto = entityToDto(pay);
         log.info("pay dto : {} ", dto);
         return dto;
@@ -279,4 +283,18 @@ public class PaymentServiceImpl implements PaymentService {
             throw e;
         }
     }
+
+    @KafkaListener(topics = "order-failed", groupId = "order-group")
+    public void paymentRefund(String event) throws Exception {
+        log.info("kafka Consumer : Payment-service, receive event : {}", event);
+        try {
+            PaymentEvent ev = new ObjectMapper().readValue(event, PaymentEvent.class);
+            log.info("kafka mapping success in Payment-Service : {}", event);
+            cancelPay(ev.getOrder().getPaymentId());
+            log.info("주문 실패 후 결제 취소 : {}", ev.getOrder().getPaymentId());
+        } catch (Exception e) {
+            throw e;
+        }
+    }
+
 }
