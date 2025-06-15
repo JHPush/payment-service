@@ -20,6 +20,7 @@ import lombok.ToString;
 public class PaymentValidateDto {
     int price;
     int quantity;
+    PaymentMethod method;
     String email;
     String paymentId;
     String orderId;

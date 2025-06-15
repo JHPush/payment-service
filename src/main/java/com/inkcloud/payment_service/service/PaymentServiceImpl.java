@@ -146,6 +146,7 @@ public class PaymentServiceImpl implements PaymentService {
                             PaymentEvent event = new PaymentEvent();
                             event.setId(paymentId);
                             event.setOrder(comparePaymentDatas.get(paymentId));
+                            event.getOrder().setMethod(method);
 
                             kafkaTemplate.send("payment-success", event);
                             comparePaymentDatas.remove(paymentId);
