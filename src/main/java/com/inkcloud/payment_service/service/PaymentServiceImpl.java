@@ -24,6 +24,7 @@ import com.inkcloud.payment_service.enums.PaymentMethod;
 import com.inkcloud.payment_service.enums.PaymentStatus;
 import com.inkcloud.payment_service.repository.PaymentRepository;
 
+import io.portone.sdk.server.errors.PaymentNotFoundException;
 import io.portone.sdk.server.webhook.Webhook;
 import io.portone.sdk.server.webhook.WebhookVerifier;
 import jakarta.transaction.Transactional;
@@ -262,16 +263,21 @@ public class PaymentServiceImpl implements PaymentService {
         return PaymentStatus.CANCELLED;
     }
 
-    @Override
-    public PaymentDto retreivePayment(String orderId) {
-        log.info("===== order Id : {} ", orderId);
-        Payment pay = repo.findByOrderId(orderId);
-        log.info("payment Info : {} ", pay.getPaymentId());
-
-        PaymentDto dto = entityToDto(pay);
-        log.info("pay dto : {} ", dto);
-        return dto;
+@Override
+public PaymentDto retreivePayment(String orderId) {
+    log.info("===== order Id : [{}] ", orderId);
+    Payment pay = repo.findByOrderIdLike(orderId);
+    
+    if (pay == null) {
+        log.error("Payment not found for orderId: [{}]", orderId);
+        throw new IllegalArgumentException("Payment not found for orderId: " + orderId);
     }
+    
+    log.info("payment Info : {} ", pay.getPaymentId());
+    PaymentDto dto = entityToDto(pay);
+    log.info("pay dto : {} ", dto);
+    return dto;
+}
 
     @KafkaListener(topics = "order-verify", groupId = "order-group")
     public void paymentVerify(String event) throws Exception {

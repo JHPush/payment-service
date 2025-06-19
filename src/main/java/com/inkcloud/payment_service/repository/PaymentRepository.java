@@ -13,4 +13,7 @@ public interface PaymentRepository extends JpaRepository<Payment, String>  {
 
     @Query("SELECT p FROM Payment p WHERE p.orderId = :orderId")
     Payment findByOrderId(@Param("orderId") String orderId);
+
+        @Query("SELECT p FROM Payment p WHERE p.orderId LIKE %:orderId%")
+    Payment findByOrderIdLike(@Param("orderId") String orderId);
 }
