@@ -165,15 +165,15 @@ public class PaymentServiceImpl implements PaymentService {
                 log.info("결제 취소 후 로직");
                 Payment payment = repo.findById(paymentId).orElseThrow(() -> new IllegalArgumentException("결제 정보 불일치"));
                 payment.setStatus(PaymentStatus.CANCELLED);
-                if (comparePaymentDatas.containsKey(paymentId)){
+                if (comparePaymentDatas.containsKey(paymentId)) {
                     comparePaymentDatas.remove(paymentId);
                 }
                 break;
             case "Failed":
                 kafkaTemplate.send("order-failed-payment-refund", comparePaymentDatas.get(paymentId).getOrderId());
                 log.info("결제 실패 알림");
-                
-                if (comparePaymentDatas.containsKey(paymentId)){
+
+                if (comparePaymentDatas.containsKey(paymentId)) {
                     comparePaymentDatas.remove(paymentId);
                 }
                 break;
@@ -255,6 +255,7 @@ public class PaymentServiceImpl implements PaymentService {
                 .bodyToMono(JsonNode.class);
         res.subscribe(data -> {
             log.info("결제 취소 완료 : {}", data.get(p.getPaymentId()));
+            p.setStatus(PaymentStatus.CANCELLED);
         }, error -> {
             log.error("Error In Pay Cancled : {} ", error.getMessage());
             throw new RuntimeException("In Payment Cancelled Error : ", error);
@@ -263,21 +264,21 @@ public class PaymentServiceImpl implements PaymentService {
         return PaymentStatus.CANCELLED;
     }
 
-@Override
-public PaymentDto retreivePayment(String orderId) {
-    log.info("===== order Id : [{}] ", orderId);
-    Payment pay = repo.findByOrderIdLike(orderId);
-    
-    if (pay == null) {
-        log.error("Payment not found for orderId: [{}]", orderId);
-        throw new IllegalArgumentException("Payment not found for orderId: " + orderId);
+    @Override
+    public PaymentDto retreivePayment(String orderId) {
+        log.info("===== order Id : [{}] ", orderId);
+        Payment pay = repo.findByOrderIdLike(orderId);
+
+        if (pay == null) {
+            log.error("Payment not found for orderId: [{}]", orderId);
+            throw new IllegalArgumentException("Payment not found for orderId: " + orderId);
+        }
+
+        log.info("payment Info : {} ", pay.getPaymentId());
+        PaymentDto dto = entityToDto(pay);
+        log.info("pay dto : {} ", dto);
+        return dto;
     }
-    
-    log.info("payment Info : {} ", pay.getPaymentId());
-    PaymentDto dto = entityToDto(pay);
-    log.info("pay dto : {} ", dto);
-    return dto;
-}
 
     @KafkaListener(topics = "order-verify", groupId = "order-group")
     public void paymentVerify(String event) throws Exception {
